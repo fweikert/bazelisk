@@ -36,7 +36,7 @@ import (
 	"syscall"
 	"time"
 
-	version "github.com/hashicorp/go-version"
+	"github.com/hashicorp/go-version"
 	homedir "github.com/mitchellh/go-homedir"
 )
 
