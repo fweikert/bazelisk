@@ -1,4 +1,4 @@
-package remote
+package httputil
 
 import (
 	"fmt"
@@ -10,7 +10,7 @@ var (
 	DefaultTransport = http.DefaultTransport
 )
 
-func ReadRemoteFile(url string, token string) ([]byte, error) {
+func ReadFile(url string, token string) ([]byte, error) {
 	client := GetClient()
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {

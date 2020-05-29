@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/bazelbuild/bazelisk/local"
 )
 
 func GetBazelVersion() (string, error) {

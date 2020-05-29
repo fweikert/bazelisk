@@ -51,6 +51,8 @@ func downloadBazel(fork string, version string, isCommit bool, directory string)
 	url := determineURL(fork, version, isCommit, filename)
 	destinationPath := filepath.Join(directory, filename)
 
+	// TODO: move this part into httputil package
+	// TODO: rename this package
 	if _, err := os.Stat(destinationPath); err != nil {
 		tmpfile, err := ioutil.TempFile(directory, "download")
 		if err != nil {
