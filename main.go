@@ -19,8 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -514,6 +512,7 @@ func determineURL(fork string, version string, isCommit bool, filename string) s
 	return fmt.Sprintf("https://github.com/%s/bazel/releases/download/%s/%s", fork, version, filename)
 }
 
+<<<<<<< HEAD
 func downloadBazel(fork string, version string, isCommit bool, directory string) (string, error) {
 	filename, err := determineBazelFilename(version)
 	if err != nil {
@@ -623,6 +622,8 @@ func runBazel(bazel string, args []string) (int, error) {
 	return 0, nil
 }
 
+=======
+>>>>>>> WIP BACKUP
 type label struct {
 	Name string `json:"name"`
 }
@@ -841,6 +842,7 @@ func dirForURL(url string) string {
 }
 
 func main() {
+<<<<<<< HEAD
 	bazeliskHome := getEnvOrConfig("BAZELISK_HOME")
 	if len(bazeliskHome) == 0 {
 		userCacheDir, err := os.UserCacheDir()
@@ -855,6 +857,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("could not create directory %s: %v", bazeliskHome, err)
 	}
+=======
+>>>>>>> WIP BACKUP
 
 	bazelVersionString, err := getBazelVersion()
 	if err != nil {

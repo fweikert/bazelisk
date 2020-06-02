@@ -1,14 +1,11 @@
-type bazelRepo interface {
-	GetVersions() ([]string, error)
+type ReleaseRepo interface {
+	GetReleaseVersions() ([]string, error)
+	DownloadRelease(version, targetDirectory string) (string, error)
+}
+
+type CandidateRepo interface {
+	GetCandidateVersions() ([]string, error)
 	DownloadCandidate(version, targetDirectory string) (string, error)
-}
-
-type UpstreamRepo interface {
-	bazelRepo
-}
-
-type ReleaseCandidatesRepo interface{
-	bazelRepo
 }
 
 type ForkRepo interface {
