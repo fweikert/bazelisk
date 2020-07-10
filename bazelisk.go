@@ -19,11 +19,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -31,7 +31,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/hashicorp/go-version"
@@ -512,7 +511,6 @@ func determineURL(fork string, version string, isCommit bool, filename string) s
 	return fmt.Sprintf("https://github.com/%s/bazel/releases/download/%s/%s", fork, version, filename)
 }
 
-<<<<<<< HEAD
 func downloadBazel(fork string, version string, isCommit bool, directory string) (string, error) {
 	filename, err := determineBazelFilename(version)
 	if err != nil {
@@ -584,123 +582,6 @@ func maybeDelegateToWrapper(bazel string) string {
 	return wrapper
 }
 
-func runBazel(bazel string, args []string) (int, error) {
-	execPath := maybeDelegateToWrapper(bazel)
-	if execPath != bazel {
-		os.Setenv(bazelReal, bazel)
-	}
-
-	cmd := exec.Command(execPath, args...)
-	cmd.Env = append(os.Environ(), skipWrapperEnv+"=true")
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	err := cmd.Start()
-	if err != nil {
-		return 1, fmt.Errorf("could not start Bazel: %v", err)
-	}
-
-	c := make(chan os.Signal)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		s := <-c
-		if runtime.GOOS != "windows" {
-			cmd.Process.Signal(s)
-		} else {
-			cmd.Process.Kill()
-		}
-	}()
-
-	err = cmd.Wait()
-	if err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			waitStatus := exitError.Sys().(syscall.WaitStatus)
-			return waitStatus.ExitStatus(), nil
-		}
-		return 1, fmt.Errorf("could not launch Bazel: %v", err)
-	}
-	return 0, nil
-}
-
-=======
->>>>>>> WIP BACKUP
-type label struct {
-	Name string `json:"name"`
-}
-
-type issue struct {
-	Title  string  `json:"title"`
-	URL    string  `json:"html_url"`
-	Labels []label `json:"labels"`
-}
-
-type issueList struct {
-	Items []issue `json:"items"`
-}
-
-type flagDetails struct {
-	Name          string
-	ReleaseToFlip string
-	IssueURL      string
-}
-
-func (f *flagDetails) String() string {
-	return fmt.Sprintf("%s (Bazel %s: %s)", f.Name, f.ReleaseToFlip, f.IssueURL)
-}
-
-func getIncompatibleFlags(bazeliskHome, resolvedBazelVersion string) (map[string]*flagDetails, error) {
-	// GitHub labels use only major and minor version, we ignore the patch number (and any other suffix).
-	re := regexp.MustCompile(`^\d+\.\d+`)
-	version := re.FindString(resolvedBazelVersion)
-	if len(version) == 0 {
-		return nil, fmt.Errorf("invalid version %v", resolvedBazelVersion)
-	}
-	url := "https://api.github.com/search/issues?per_page=100&q=repo:bazelbuild/bazel+label:migration-" + version
-	issuesJSON, err := maybeDownload(bazeliskHome, url, "flags-"+version, "list of flags from GitHub")
-	if err != nil {
-		return nil, fmt.Errorf("could not get issues from GitHub: %v", err)
-	}
-
-	result, err := scanIssuesForIncompatibleFlags(issuesJSON)
-	return result, err
-}
-
-func scanIssuesForIncompatibleFlags(issuesJSON []byte) (map[string]*flagDetails, error) {
-	result := make(map[string]*flagDetails)
-	var issueList issueList
-	if err := json.Unmarshal(issuesJSON, &issueList); err != nil {
-		return nil, fmt.Errorf("could not parse JSON into list of issues: %v", err)
-	}
-
-	re := regexp.MustCompile(`^incompatible_\w+`)
-	s_re := regexp.MustCompile(`^//.*[^/]:incompatible_\w+`)
-	for _, issue := range issueList.Items {
-		flag := re.FindString(issue.Title)
-		if len(flag) <= 0 {
-			flag = s_re.FindString(issue.Title)
-		}
-		if len(flag) > 0 {
-			name := "--" + flag
-			result[name] = &flagDetails{
-				Name:          name,
-				ReleaseToFlip: getBreakingRelease(issue.Labels),
-				IssueURL:      issue.URL,
-			}
-		}
-	}
-
-	return result, nil
-}
-
-func getBreakingRelease(labels []label) string {
-	for _, l := range labels {
-		if release := strings.TrimPrefix(l.Name, "breaking-change-"); release != l.Name {
-			return release
-		}
-	}
-	return "TBD"
-}
-
 // insertArgs will insert newArgs in baseArgs. If baseArgs contains the
 // "--" argument, newArgs will be inserted before that. Otherwise, newArgs
 // is appended.
@@ -721,112 +602,6 @@ func insertArgs(baseArgs []string, newArgs []string) []string {
 	return result
 }
 
-func shutdownIfNeeded(bazelPath string) {
-	bazeliskClean := getEnvOrConfig("BAZELISK_SHUTDOWN")
-	if len(bazeliskClean) == 0 {
-		return
-	}
-
-	fmt.Printf("bazel shutdown\n")
-	exitCode, err := runBazel(bazelPath, []string{"shutdown"})
-	fmt.Printf("\n")
-	if err != nil {
-		log.Fatalf("failed to run bazel shutdown: %v", err)
-	}
-	if exitCode != 0 {
-		fmt.Printf("Failure: shutdown command failed.\n")
-		os.Exit(exitCode)
-	}
-}
-
-func cleanIfNeeded(bazelPath string) {
-	bazeliskClean := getEnvOrConfig("BAZELISK_CLEAN")
-	if len(bazeliskClean) == 0 {
-		return
-	}
-
-	fmt.Printf("bazel clean --expunge\n")
-	exitCode, err := runBazel(bazelPath, []string{"clean", "--expunge"})
-	fmt.Printf("\n")
-	if err != nil {
-		log.Fatalf("failed to run clean: %v", err)
-	}
-	if exitCode != 0 {
-		fmt.Printf("Failure: clean command failed.\n")
-		os.Exit(exitCode)
-	}
-}
-
-// migrate will run Bazel with each newArgs separately and report which ones are failing.
-func migrate(bazelPath string, baseArgs []string, flags map[string]*flagDetails) {
-	newArgs := getSortedKeys(flags)
-	// 1. Try with all the flags.
-	args := insertArgs(baseArgs, newArgs)
-	fmt.Printf("\n\n--- Running Bazel with all incompatible flags\n\n")
-	shutdownIfNeeded(bazelPath)
-	cleanIfNeeded(bazelPath)
-	fmt.Printf("bazel %s\n", strings.Join(args, " "))
-	exitCode, err := runBazel(bazelPath, args)
-	if err != nil {
-		log.Fatalf("could not run Bazel: %v", err)
-	}
-	if exitCode == 0 {
-		fmt.Printf("Success: No migration needed.\n")
-		os.Exit(0)
-	}
-
-	// 2. Try with no flags, as a sanity check.
-	args = baseArgs
-	fmt.Printf("\n\n--- Running Bazel with no incompatible flags\n\n")
-	shutdownIfNeeded(bazelPath)
-	cleanIfNeeded(bazelPath)
-	fmt.Printf("bazel %s\n", strings.Join(args, " "))
-	exitCode, err = runBazel(bazelPath, args)
-	if err != nil {
-		log.Fatalf("could not run Bazel: %v", err)
-	}
-	if exitCode != 0 {
-		fmt.Printf("Failure: Command failed, even without incompatible flags.\n")
-		os.Exit(exitCode)
-	}
-
-	// 3. Try with each flag separately.
-	var passList []string
-	var failList []string
-	for _, arg := range newArgs {
-		args = insertArgs(baseArgs, []string{arg})
-		fmt.Printf("\n\n--- Running Bazel with %s\n\n", arg)
-		shutdownIfNeeded(bazelPath)
-		cleanIfNeeded(bazelPath)
-		fmt.Printf("bazel %s\n", strings.Join(args, " "))
-		exitCode, err = runBazel(bazelPath, args)
-		if err != nil {
-			log.Fatalf("could not run Bazel: %v", err)
-		}
-		if exitCode == 0 {
-			passList = append(passList, arg)
-		} else {
-			failList = append(failList, arg)
-		}
-	}
-
-	print := func(l []string) {
-		for _, arg := range l {
-			fmt.Printf("  %s\n", flags[arg])
-		}
-	}
-
-	// 4. Print report
-	fmt.Printf("\n\n+++ Result\n\n")
-	fmt.Printf("Command was successful with the following flags:\n")
-	print(passList)
-	fmt.Printf("\n")
-	fmt.Printf("Migration is needed for the following flags:\n")
-	print(failList)
-
-	os.Exit(1)
-}
-
 func getSortedKeys(data map[string]*flagDetails) []string {
 	result := make([]string, 0)
 	for key := range data {
@@ -842,7 +617,6 @@ func dirForURL(url string) string {
 }
 
 func main() {
-<<<<<<< HEAD
 	bazeliskHome := getEnvOrConfig("BAZELISK_HOME")
 	if len(bazeliskHome) == 0 {
 		userCacheDir, err := os.UserCacheDir()
@@ -857,8 +631,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("could not create directory %s: %v", bazeliskHome, err)
 	}
-=======
->>>>>>> WIP BACKUP
 
 	bazelVersionString, err := getBazelVersion()
 	if err != nil {
