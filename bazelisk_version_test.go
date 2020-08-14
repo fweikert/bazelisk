@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/bazelbuild/bazelisk/utils"
 )
 
 var (
@@ -17,7 +19,7 @@ var (
 )
 
 func init() {
-	DefaultTransport = transport
+	utils.DefaultTransport = transport
 }
 
 func TestMain(m *testing.M) {

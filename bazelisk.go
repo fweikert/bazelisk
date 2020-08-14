@@ -22,7 +22,6 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -36,6 +35,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bazelbuild/bazelisk/utils"
 	version "github.com/hashicorp/go-version"
 	homedir "github.com/mitchellh/go-homedir"
 )
@@ -49,16 +49,11 @@ const (
 
 var (
 	// BazeliskVersion is filled in via x_defs when building a release.
-	BazeliskVersion  = "development"
-	DefaultTransport = http.DefaultTransport
+	BazeliskVersion = "development"
 
 	fileConfig     map[string]string
 	fileConfigOnce sync.Once
 )
-
-func getClient() *http.Client {
-	return &http.Client{Transport: DefaultTransport}
-}
 
 // getEnvOrConfig will read a configuration value from the environment, but fall back to reading it from .bazeliskrc in the workspace root.
 func getEnvOrConfig(name string) string {
@@ -189,34 +184,6 @@ type release struct {
 	Prerelease bool   `json:"prerelease"`
 }
 
-func readRemoteFile(url string, token string) ([]byte, error) {
-	client := getClient()
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("could not create request: %v", err)
-	}
-
-	if token != "" {
-		req.Header.Set("Authorization", "token "+token)
-	}
-
-	res, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("could not fetch %s: %v", url, err)
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode != 200 {
-		return nil, fmt.Errorf("unexpected status code while reading %s: %v", url, res.StatusCode)
-	}
-
-	body, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read content at %s: %v", url, err)
-	}
-	return body, nil
-}
-
 // maybeDownload will download a file from the given url and cache the result under bazeliskHome.
 // It skips the download if the file already exists and is not outdated.
 // description is used only to provide better error messages.
@@ -234,7 +201,7 @@ func maybeDownload(bazeliskHome, url, filename, description string) ([]byte, err
 	}
 
 	// We could also use go-github here, but I can't get it to build with Bazel's rules_go and it pulls in a lot of dependencies.
-	body, err := readRemoteFile(url, getEnvOrConfig("BAZELISK_GITHUB_TOKEN"))
+	body, err := utils.ReadRemoteFile(url, getEnvOrConfig("BAZELISK_GITHUB_TOKEN"))
 	if err != nil {
 		return nil, fmt.Errorf("could not download %s: %v", description, err)
 	}
@@ -368,7 +335,7 @@ func listDirectoriesInReleaseBucket(prefix string) ([]string, bool, error) {
 	if prefix != "" {
 		url = fmt.Sprintf("%s&prefix=%s", url, prefix)
 	}
-	content, err := readRemoteFile(url, "")
+	content, err := utils.ReadRemoteFile(url, "")
 	if err != nil {
 		return nil, false, fmt.Errorf("could not list GCS objects at %s: %v", url, err)
 	}
@@ -450,43 +417,11 @@ func resolveVersionLabel(bazeliskHome, bazelFork, bazelVersion string) (string, 
 const lastGreenBasePath = "https://storage.googleapis.com/bazel-untrusted-builds/last_green_commit/"
 
 func getLastGreenCommit(pathSuffix string) (string, error) {
-	content, err := readRemoteFile(lastGreenBasePath+pathSuffix, "")
+	content, err := utils.ReadRemoteFile(lastGreenBasePath+pathSuffix, "")
 	if err != nil {
 		return "", fmt.Errorf("could not determine last green commit: %v", err)
 	}
 	return strings.TrimSpace(string(content)), nil
-}
-
-func determineExecutableFilenameSuffix() string {
-	filenameSuffix := ""
-	if runtime.GOOS == "windows" {
-		filenameSuffix = ".exe"
-	}
-	return filenameSuffix
-}
-
-func determineBazelFilename(version string) (string, error) {
-	var machineName string
-	switch runtime.GOARCH {
-	case "amd64":
-		machineName = "x86_64"
-	case "arm64":
-		machineName = "arm64"
-	default:
-		return "", fmt.Errorf("unsupported machine architecture \"%s\", must be arm64 or x86_64", runtime.GOARCH)
-	}
-
-	var osName string
-	switch runtime.GOOS {
-	case "darwin", "linux", "windows":
-		osName = runtime.GOOS
-	default:
-		return "", fmt.Errorf("unsupported operating system \"%s\", must be Linux, macOS or Windows", runtime.GOOS)
-	}
-
-	filenameSuffix := determineExecutableFilenameSuffix()
-
-	return fmt.Sprintf("bazel-%s-%s-%s%s", version, osName, machineName, filenameSuffix), nil
 }
 
 func determineURL(fork string, version string, isCommit bool, filename string) string {
@@ -496,10 +431,9 @@ func determineURL(fork string, version string, isCommit bool, filename string) s
 		if len(baseURL) == 0 {
 			baseURL = "https://storage.googleapis.com/bazel-builds/artifacts"
 		}
-		var platforms = map[string]string{"darwin": "macos", "linux": "ubuntu1404", "windows": "windows"}
 		// No need to check the OS thanks to determineBazelFilename().
 		log.Printf("Using unreleased version at commit %s", version)
-		return fmt.Sprintf("%s/%s/%s/bazel", baseURL, platforms[runtime.GOOS], version)
+		return fmt.Sprintf("%s/%s/%s/bazel", baseURL, utils.GetPlatform(), version)
 	}
 
 	kind := "release"
@@ -532,53 +466,7 @@ func downloadBazel(fork string, version string, isCommit bool, baseDirectory str
 	filenameSuffix := determineExecutableFilenameSuffix()
 	directoryName := strings.TrimSuffix(filename, filenameSuffix)
 	destinationDir := filepath.Join(baseDirectory, directoryName, "bin")
-	err = os.MkdirAll(destinationDir, 0755)
-	if err != nil {
-		return "", fmt.Errorf("could not create directory %s: %v", destinationDir, err)
-	}
-	destinationPath := filepath.Join(destinationDir, "bazel"+filenameSuffix)
-
-	if _, err := os.Stat(destinationPath); err != nil {
-		tmpfile, err := ioutil.TempFile(destinationDir, "download")
-		if err != nil {
-			return "", fmt.Errorf("could not create temporary file: %v", err)
-		}
-		defer func() {
-			err := tmpfile.Close()
-			if err == nil {
-				os.Remove(tmpfile.Name())
-			}
-		}()
-
-		log.Printf("Downloading %s...", url)
-		resp, err := getClient().Get(url)
-		if err != nil {
-			return "", fmt.Errorf("HTTP GET %s failed: %v", url, err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != 200 {
-			return "", fmt.Errorf("HTTP GET %s failed with error %v", url, resp.StatusCode)
-		}
-
-		_, err = io.Copy(tmpfile, resp.Body)
-		if err != nil {
-			return "", fmt.Errorf("could not copy from %s to %s: %v", url, tmpfile.Name(), err)
-		}
-
-		err = os.Chmod(tmpfile.Name(), 0755)
-		if err != nil {
-			return "", fmt.Errorf("could not chmod file %s: %v", tmpfile.Name(), err)
-		}
-
-		tmpfile.Close()
-		err = os.Rename(tmpfile.Name(), destinationPath)
-		if err != nil {
-			return "", fmt.Errorf("could not move %s to %s: %v", tmpfile.Name(), destinationPath, err)
-		}
-	}
-
-	return destinationPath, nil
+	return utils.DownloadBinary(url, destinationDir, "bazel"+filenameSuffix)
 }
 
 func copyFile(src, dst string, perm os.FileMode) error {
@@ -919,12 +807,12 @@ func dirForURL(url string) string {
 	return regexp.MustCompile("[[:^alnum:]]").ReplaceAllString(url, "-")
 }
 
-func main() {
+func RunBazelisk(args []string) (int, error) {
 	bazeliskHome := getEnvOrConfig("BAZELISK_HOME")
 	if len(bazeliskHome) == 0 {
 		userCacheDir, err := os.UserCacheDir()
 		if err != nil {
-			log.Fatalf("could not get the user's cache directory: %v", err)
+			return -1, fmt.Errorf("could not get the user's cache directory: %v", err)
 		}
 
 		bazeliskHome = filepath.Join(userCacheDir, "bazelisk")
@@ -932,17 +820,17 @@ func main() {
 
 	err := os.MkdirAll(bazeliskHome, 0755)
 	if err != nil {
-		log.Fatalf("could not create directory %s: %v", bazeliskHome, err)
+		return -1, fmt.Errorf("could not create directory %s: %v", bazeliskHome, err)
 	}
 
 	bazelVersionString, err := getBazelVersion()
 	if err != nil {
-		log.Fatalf("could not get Bazel version: %v", err)
+		return -1, fmt.Errorf("could not get Bazel version: %v", err)
 	}
 
 	bazelPath, err := homedir.Expand(bazelVersionString)
 	if err != nil {
-		log.Fatalf("could not expand home directory in path: %v", err)
+		return -1, fmt.Errorf("could not expand home directory in path: %v", err)
 	}
 
 	// If the Bazel version is an absolute path to a Bazel binary in the filesystem, we can
@@ -955,12 +843,12 @@ func main() {
 	if !filepath.IsAbs(bazelPath) {
 		bazelFork, bazelVersion, err := parseBazelForkAndVersion(bazelVersionString)
 		if err != nil {
-			log.Fatalf("could not parse Bazel fork and version: %v", err)
+			return -1, fmt.Errorf("could not parse Bazel fork and version: %v", err)
 		}
 
 		resolvedBazelVersion, isCommit, err = resolveVersionLabel(bazeliskHome, bazelFork, bazelVersion)
 		if err != nil {
-			log.Fatalf("could not resolve the version '%s' to an actual version number: %v", bazelVersion, err)
+			return -1, fmt.Errorf("could not resolve the version '%s' to an actual version number: %v", bazelVersion, err)
 		}
 
 		bazelForkOrURL := dirForURL(getEnvOrConfig("BAZELISK_BASE_URL"))
@@ -971,17 +859,15 @@ func main() {
 		baseDirectory := filepath.Join(bazeliskHome, "downloads", bazelForkOrURL)
 		bazelPath, err = downloadBazel(bazelFork, resolvedBazelVersion, isCommit, baseDirectory)
 		if err != nil {
-			log.Fatalf("could not download Bazel: %v", err)
+			return -1, fmt.Errorf("could not download Bazel: %v", err)
 		}
 	} else {
 		baseDirectory := filepath.Join(bazeliskHome, "local")
 		bazelPath, err = linkLocalBazel(baseDirectory, bazelPath)
 		if err != nil {
-			log.Fatalf("cound not link local Bazel: %v", err)
+			return -1, fmt.Errorf("cound not link local Bazel: %v", err)
 		}
 	}
-
-	args := os.Args[1:]
 
 	// --print_env must be the first argument.
 	if len(args) > 0 && args[0] == "--print_env" {
@@ -990,7 +876,7 @@ func main() {
 		for _, val := range cmd.Env {
 			fmt.Println(val)
 		}
-		os.Exit(0)
+		return 0, nil
 	}
 
 	// --strict and --migrate must be the first argument.
@@ -998,7 +884,7 @@ func main() {
 		cmd := args[0]
 		newFlags, err := getIncompatibleFlags(bazeliskHome, resolvedBazelVersion)
 		if err != nil {
-			log.Fatalf("could not get the list of incompatible flags: %v", err)
+			return -1, fmt.Errorf("could not get the list of incompatible flags: %v", err)
 		}
 
 		if cmd == "--migrate" {
@@ -1032,7 +918,15 @@ func main() {
 
 	exitCode, err := runBazel(bazelPath, args)
 	if err != nil {
-		log.Fatalf("could not run Bazel: %v", err)
+		return -1, fmt.Errorf("could not run Bazel: %v", err)
+	}
+	return exitCode, nil
+}
+
+func main() {
+	exitCode, err := RunBazelisk(os.Args[1:])
+	if err != nil {
+		log.Fatal(err)
 	}
 	os.Exit(exitCode)
 }
