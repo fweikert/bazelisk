@@ -14,57 +14,26 @@ type ReleaseRepo interface {
 }
 
 type CandidateRepo interface {
-	GetCandidateVersions() ([]string, error)
+	GetLatestCandidateVersion() (string, error)
 	DownloadCandidate(version, destDir, destFile string) (string, error)
 }
 
 type ForkRepo interface {
 	GetVersions(fork string) ([]string, error)
-	DownloadVersion(fork, version, destDir, destFile string)
+	DownloadVersion(fork, version, destDir, destFile string) (string, error)
 }
 
 type LastGreenRepo interface {
-	DownloadLastGreen(commit, destDir, destFile string)
+	GetLastGreenVersion(downstreamGreen bool) (string, error)
+	DownloadLastGreen(commit, destDir, destFile string) (string, error)
 }
 
 type Repositories struct {
-	releases        ReleaseRepo
-	candidates      CandidateRepo
-	fork            ForkRepo
-	lastGreen       LastGreenRepo
+	Releases        ReleaseRepo
+	Candidates      CandidateRepo
+	Fork            ForkRepo
+	LastGreen       LastGreenRepo
 	supportsBaseURL bool
-}
-
-func CreateRepositories(releases ReleaseRepo, candidates CandidateRepo, fork ForkRepo, lastGreen LastGreenRepo, supportsBaseURL bool) *Repositories {
-	return &Repositories{releases: releases, candidates: candidates, fork: fork, lastGreen: lastGreen, supportsBaseURL: supportsBaseURL}
-}
-
-func (r *Repositories) Releases() (ReleaseRepo, error) {
-	if r.releases == nil {
-		return nil, errors.New("official Bazel releases are not supported")
-	}
-	return r.releases, nil
-}
-
-func (r *Repositories) Candidates() (CandidateRepo, error) {
-	if r.candidates == nil {
-		return nil, errors.New("Bazel release candidates are not supported")
-	}
-	return r.candidates, nil
-}
-
-func (r *Repositories) Fork() (ForkRepo, error) {
-	if r.fork == nil {
-		return nil, errors.New("forked versions of Bazel are not supported")
-	}
-	return r.fork, nil
-}
-
-func (r *Repositories) LastGreen() (LastGreenRepo, error) {
-	if r.lastGreen == nil {
-		return nil, errors.New("Bazel-at-last-green versions are not supported")
-	}
-	return r.lastGreen, nil
 }
 
 func (r *Repositories) DownloadFromBaseURL(baseURL, version, destDir, destFile string) (string, error) {
@@ -75,4 +44,82 @@ func (r *Repositories) DownloadFromBaseURL(baseURL, version, destDir, destFile s
 	}
 	url := fmt.Sprintf("%s/%s/%s", baseURL, platforms.GetPlatform(), version)
 	return httputil.DownloadBinary(url, destDir, destFile)
+}
+
+func CreateRepositories(releases ReleaseRepo, candidates CandidateRepo, fork ForkRepo, lastGreen LastGreenRepo, supportsBaseURL bool) *Repositories {
+	repos := &Repositories{supportsBaseURL: supportsBaseURL}
+
+	if releases == nil {
+		repo.releases = &noReleaseRepo{errors.New("official Bazel releases are not supported")}
+	} else {
+		repo.releases = releases
+	}
+
+	if candidates == nil {
+		repo.candidates = &noCandidateRepo{errors.New("Bazel release candidates are not supported")}
+	} else {
+		repo.candidates = candidates
+	}
+
+	if fork == nil {
+		repo.fork = &noForkRepo{errors.New("forked versions of Bazel are not supported")}
+	} else {
+		repo.fork = fork
+	}
+
+	if lastGreen == nil {
+		repo.lastGreen = &noLastGreenRepo{errors.New("Bazel-at-last-green versions are not supported")}
+	} else {
+		repo.lastGreen = lastGreen
+	}
+
+	return repos
+}
+
+type noReleaseRepo struct {
+	Error error
+}
+
+func (nrr *noReleaseRepo) GetReleaseVersions() ([]string, error) {
+	return []string{}, nrr.Error
+}
+
+func (nrr *noReleaseRepo) DownloadRelease(version, destDir, destFile string) (string, error) {
+	return "", nrr.releaseError
+}
+
+type noCandidateRepo struct {
+	Error error
+}
+
+func (ncc *noCandidateRepo) GetLatestCandidateVersion() (string, error) {
+	return "", ncc.Error
+}
+
+func (ncc *noCandidateRepo) DownloadCandidate(version, destDir, destFile string) (string, error) {
+	return "", ncc.Error
+}
+
+type noForkRepo struct {
+	Error error
+}
+
+func (nfr *noForkRepo) GetVersions(fork string) ([]string, error) {
+	return "", nfr.kError
+}
+
+func (nfr *noForkRepo) DownloadVersion(fork, version, destDir, destFile string) (string, error) {
+	return "", nfr.kError
+}
+
+type noLastGreenRepo struct {
+	Error error
+}
+
+func (nlgr *noLastGreenRepo) GetLastGreenVersion(downstreamGreen bool) (string, error) {
+	return "", nlgr.Error
+}
+
+func (nlgr *noLastGreenRepo) DownloadLastGreen(commit, destDir, destFile string) (string, error) {
+	return "", nlgr.Error
 }

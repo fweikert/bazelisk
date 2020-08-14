@@ -35,7 +35,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/bazelbuild/bazelisk/utils"
+	"github.com/bazelbuild/bazelisk/core"
+	"github.com/bazelbuild/bazelisk/httputil"
+	"github.com/bazelbuild/bazelisk/platforms"
 	version "github.com/hashicorp/go-version"
 	homedir "github.com/mitchellh/go-homedir"
 )
@@ -201,7 +203,7 @@ func maybeDownload(bazeliskHome, url, filename, description string) ([]byte, err
 	}
 
 	// We could also use go-github here, but I can't get it to build with Bazel's rules_go and it pulls in a lot of dependencies.
-	body, err := utils.ReadRemoteFile(url, getEnvOrConfig("BAZELISK_GITHUB_TOKEN"))
+	body, err := httputil.ReadRemoteFile(url, getEnvOrConfig("BAZELISK_GITHUB_TOKEN"))
 	if err != nil {
 		return nil, fmt.Errorf("could not download %s: %v", description, err)
 	}
@@ -233,6 +235,7 @@ func resolveLatestVersion(bazeliskHome, bazelFork string, offset int) (string, e
 	return versions[len(versions)-1-offset], nil
 }
 
+// TODO(fweikert): move into github.go
 func getVersionHistoryFromGitHub(bazeliskHome, bazelFork string) ([]string, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/bazel/releases", bazelFork)
 	releasesJSON, err := maybeDownload(bazeliskHome, url, bazelFork+"-releases.json", "list of Bazel releases from github.com/"+bazelFork)
@@ -255,6 +258,7 @@ func getVersionHistoryFromGitHub(bazeliskHome, bazelFork string) ([]string, erro
 	return getVersionsInAscendingOrder(tags)
 }
 
+// TODO(fweikert): move into gcs.go
 func getVersionHistoryFromGCS(onlyFullReleases bool) ([]string, error) {
 	prefixes, _, err := listDirectoriesInReleaseBucket("")
 	if err != nil {
@@ -335,7 +339,7 @@ func listDirectoriesInReleaseBucket(prefix string) ([]string, bool, error) {
 	if prefix != "" {
 		url = fmt.Sprintf("%s&prefix=%s", url, prefix)
 	}
-	content, err := utils.ReadRemoteFile(url, "")
+	content, err := httputil.ReadRemoteFile(url, "")
 	if err != nil {
 		return nil, false, fmt.Errorf("could not list GCS objects at %s: %v", url, err)
 	}
@@ -370,18 +374,14 @@ func getHighestRcVersion(versions []string) (string, error) {
 	return fmt.Sprintf("%src%d", version, lastRc), nil
 }
 
-func resolveVersionLabel(bazeliskHome, bazelFork, bazelVersion string) (string, bool, error) {
+func resolveVersionLabel(bazeliskHome, bazelFork, bazelVersion string, repos *core.Repositories) (string, bool, error) {
 	if bazelFork == bazelUpstream {
 		// Returns three values:
 		// 1. The label of a Blaze release (if the label resolves to a release) or a commit (for unreleased binaries),
 		// 2. Whether the first value refers to a commit,
 		// 3. An error.
-		lastGreenCommitPathSuffixes := map[string]string{
-			"last_green":            "github.com/bazelbuild/bazel.git/bazel-bazel",
-			"last_downstream_green": "downstream_pipeline",
-		}
-		if pathSuffix, ok := lastGreenCommitPathSuffixes[bazelVersion]; ok {
-			commit, err := getLastGreenCommit(pathSuffix)
+		if ok, downstreamGreen := isLastGreen(bazelVersion); ok {
+			commit, err := repos.LastGreen.GetLastGreenVersion(downstreamGreen)
 			if err != nil {
 				return "", false, fmt.Errorf("cannot resolve last green commit: %v", err)
 			}
@@ -414,14 +414,10 @@ func resolveVersionLabel(bazeliskHome, bazelFork, bazelVersion string) (string, 
 	return bazelVersion, false, nil
 }
 
-const lastGreenBasePath = "https://storage.googleapis.com/bazel-untrusted-builds/last_green_commit/"
-
-func getLastGreenCommit(pathSuffix string) (string, error) {
-	content, err := utils.ReadRemoteFile(lastGreenBasePath+pathSuffix, "")
-	if err != nil {
-		return "", fmt.Errorf("could not determine last green commit: %v", err)
-	}
-	return strings.TrimSpace(string(content)), nil
+func isLastGreen(version string) (ok bool, includeDownstream bool) {
+	includeDownstream = version == "last_downstream_green"
+	ok = version == "last_green" || isDownstream
+	return
 }
 
 func determineURL(fork string, version string, isCommit bool, filename string) string {
@@ -433,7 +429,7 @@ func determineURL(fork string, version string, isCommit bool, filename string) s
 		}
 		// No need to check the OS thanks to determineBazelFilename().
 		log.Printf("Using unreleased version at commit %s", version)
-		return fmt.Sprintf("%s/%s/%s/bazel", baseURL, utils.GetPlatform(), version)
+		return fmt.Sprintf("%s/%s/%s/bazel", baseURL, platforms.GetPlatform(), version)
 	}
 
 	kind := "release"
@@ -456,17 +452,17 @@ func determineURL(fork string, version string, isCommit bool, filename string) s
 }
 
 func downloadBazel(fork string, version string, isCommit bool, baseDirectory string) (string, error) {
-	filename, err := determineBazelFilename(version)
+	filename, err := platforms.DetermineBazelFilename(version)
 	if err != nil {
 		return "", fmt.Errorf("could not determine filename to use for Bazel binary: %v", err)
 	}
 
 	url := determineURL(fork, version, isCommit, filename)
 
-	filenameSuffix := determineExecutableFilenameSuffix()
+	filenameSuffix := platforms.DetermineExecutableFilenameSuffix()
 	directoryName := strings.TrimSuffix(filename, filenameSuffix)
 	destinationDir := filepath.Join(baseDirectory, directoryName, "bin")
-	return utils.DownloadBinary(url, destinationDir, "bazel"+filenameSuffix)
+	return httputil.DownloadBinary(url, destinationDir, "bazel"+filenameSuffix)
 }
 
 func copyFile(src, dst string, perm os.FileMode) error {
@@ -494,7 +490,7 @@ func linkLocalBazel(baseDirectory string, bazelPath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("could not create directory %s: %v", destinationDir, err)
 	}
-	destinationPath := filepath.Join(destinationDir, "bazel"+determineExecutableFilenameSuffix())
+	destinationPath := filepath.Join(destinationDir, "bazel"+platforms.DetermineExecutableFilenameSuffix())
 	if _, err := os.Stat(destinationPath); err != nil {
 		err = os.Symlink(bazelPath, destinationPath)
 		// If can't create Symlink, fallback to copy
@@ -924,7 +920,9 @@ func RunBazelisk(args []string) (int, error) {
 }
 
 func main() {
-	exitCode, err := RunBazelisk(os.Args[1:])
+	repositories := core.CreateRepositories()
+
+	exitCode, err := RunBazelisk(os.Args[1:], repositories)
 	if err != nil {
 		log.Fatal(err)
 	}

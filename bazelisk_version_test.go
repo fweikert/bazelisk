@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bazelbuild/bazelisk/utils"
+	"github.com/bazelbuild/bazelisk/httputil"
 )
 
 var (
@@ -19,7 +19,7 @@ var (
 )
 
 func init() {
-	utils.DefaultTransport = transport
+	httputil.DefaultTransport = transport
 }
 
 func TestMain(m *testing.M) {

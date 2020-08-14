@@ -1,4 +1,4 @@
-package utils
+package platforms
 
 import (
 	"fmt"
@@ -38,7 +38,7 @@ func DetermineBazelFilename(version string) (string, error) {
 		return "", fmt.Errorf("unsupported operating system \"%s\", must be Linux, macOS or Windows", runtime.GOOS)
 	}
 
-	filenameSuffix := determineExecutableFilenameSuffix()
+	filenameSuffix := DetermineExecutableFilenameSuffix()
 
 	return fmt.Sprintf("bazel-%s-%s-%s%s", version, osName, machineName, filenameSuffix), nil
 }
