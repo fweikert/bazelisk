@@ -76,6 +76,8 @@ func CreateRepositories(releases ReleaseRepo, candidates CandidateRepo, fork For
 	return repos
 }
 
+// The whole point of the structs below this line is that users can simply call repos.Releases.GetReleaseVersions()
+// (etc) without having to worry whether `Releases` points at an actual repo.
 type noReleaseRepo struct {
 	Error error
 }
