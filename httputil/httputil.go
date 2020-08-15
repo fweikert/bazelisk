@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 var (
@@ -94,4 +95,34 @@ func DownloadBinary(originURL, destDir, destFile string) (string, error) {
 	}
 
 	return destinationPath, nil
+}
+
+// MaybeDownload will download a file from the given url and cache the result under bazeliskHome.
+// It skips the download if the file already exists and is not outdated.
+// description is used only to provide better error messages.
+func MaybeDownload(bazeliskHome, url, filename, description, token string) ([]byte, error) {
+	cachePath := filepath.Join(bazeliskHome, filename)
+
+	if cacheStat, err := os.Stat(cachePath); err == nil {
+		if time.Since(cacheStat.ModTime()).Hours() < 1 {
+			res, err := ioutil.ReadFile(cachePath)
+			if err != nil {
+				return nil, fmt.Errorf("could not read %s: %v", cachePath, err)
+			}
+			return res, nil
+		}
+	}
+
+	// We could also use go-github here, but I can't get it to build with Bazel's rules_go and it pulls in a lot of dependencies.
+	body, err := ReadRemoteFile(url, token)
+	if err != nil {
+		return nil, fmt.Errorf("could not download %s: %v", description, err)
+	}
+
+	err = ioutil.WriteFile(cachePath, body, 0666)
+	if err != nil {
+		return nil, fmt.Errorf("could not create %s: %v", cachePath, err)
+	}
+
+	return body, nil
 }

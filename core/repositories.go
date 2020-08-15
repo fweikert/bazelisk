@@ -9,22 +9,22 @@ import (
 )
 
 type ReleaseRepo interface {
-	GetReleaseVersions() ([]string, error)
+	GetReleaseVersions(bazeliskHome string) ([]string, error)
 	DownloadRelease(version, destDir, destFile string) (string, error)
 }
 
 type CandidateRepo interface {
-	GetLatestCandidateVersion() (string, error)
+	GetCandidateVersions(bazeliskHome string) ([]string, error)
 	DownloadCandidate(version, destDir, destFile string) (string, error)
 }
 
 type ForkRepo interface {
-	GetVersions(fork string) ([]string, error)
+	GetVersions(bazeliskHome, fork string) ([]string, error)
 	DownloadVersion(fork, version, destDir, destFile string) (string, error)
 }
 
 type LastGreenRepo interface {
-	GetLastGreenVersion(downstreamGreen bool) (string, error)
+	GetLastGreenVersion(bazeliskHome string, downstreamGreen bool) (string, error)
 	DownloadLastGreen(commit, destDir, destFile string) (string, error)
 }
 
@@ -50,27 +50,27 @@ func CreateRepositories(releases ReleaseRepo, candidates CandidateRepo, fork For
 	repos := &Repositories{supportsBaseURL: supportsBaseURL}
 
 	if releases == nil {
-		repo.releases = &noReleaseRepo{errors.New("official Bazel releases are not supported")}
+		repos.Releases = &noReleaseRepo{errors.New("official Bazel releases are not supported")}
 	} else {
-		repo.releases = releases
+		repos.Releases = releases
 	}
 
 	if candidates == nil {
-		repo.candidates = &noCandidateRepo{errors.New("Bazel release candidates are not supported")}
+		repos.Candidates = &noCandidateRepo{errors.New("Bazel release candidates are not supported")}
 	} else {
-		repo.candidates = candidates
+		repos.Candidates = candidates
 	}
 
 	if fork == nil {
-		repo.fork = &noForkRepo{errors.New("forked versions of Bazel are not supported")}
+		repos.Fork = &noForkRepo{errors.New("forked versions of Bazel are not supported")}
 	} else {
-		repo.fork = fork
+		repos.Fork = fork
 	}
 
 	if lastGreen == nil {
-		repo.lastGreen = &noLastGreenRepo{errors.New("Bazel-at-last-green versions are not supported")}
+		repos.LastGreen = &noLastGreenRepo{errors.New("Bazel-at-last-green versions are not supported")}
 	} else {
-		repo.lastGreen = lastGreen
+		repos.LastGreen = lastGreen
 	}
 
 	return repos
@@ -80,20 +80,20 @@ type noReleaseRepo struct {
 	Error error
 }
 
-func (nrr *noReleaseRepo) GetReleaseVersions() ([]string, error) {
+func (nrr *noReleaseRepo) GetReleaseVersions(bazeliskHome string) ([]string, error) {
 	return []string{}, nrr.Error
 }
 
 func (nrr *noReleaseRepo) DownloadRelease(version, destDir, destFile string) (string, error) {
-	return "", nrr.releaseError
+	return "", nrr.Error
 }
 
 type noCandidateRepo struct {
 	Error error
 }
 
-func (ncc *noCandidateRepo) GetLatestCandidateVersion() (string, error) {
-	return "", ncc.Error
+func (ncc *noCandidateRepo) GetCandidateVersions(bazeliskHome string) ([]string, error) {
+	return []string{}, ncc.Error
 }
 
 func (ncc *noCandidateRepo) DownloadCandidate(version, destDir, destFile string) (string, error) {
@@ -104,19 +104,19 @@ type noForkRepo struct {
 	Error error
 }
 
-func (nfr *noForkRepo) GetVersions(fork string) ([]string, error) {
-	return "", nfr.kError
+func (nfr *noForkRepo) GetVersions(bazeliskHome, fork string) ([]string, error) {
+	return []string{}, nfr.Error
 }
 
 func (nfr *noForkRepo) DownloadVersion(fork, version, destDir, destFile string) (string, error) {
-	return "", nfr.kError
+	return "", nfr.Error
 }
 
 type noLastGreenRepo struct {
 	Error error
 }
 
-func (nlgr *noLastGreenRepo) GetLastGreenVersion(downstreamGreen bool) (string, error) {
+func (nlgr *noLastGreenRepo) GetLastGreenVersion(bazeliskHome string, downstreamGreen bool) (string, error) {
 	return "", nlgr.Error
 }
 

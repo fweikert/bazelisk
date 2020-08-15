@@ -10,5 +10,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//httputil",
+        "//versions",
     ],
 )

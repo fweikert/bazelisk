@@ -51,6 +51,7 @@ go_library(
         "//httputil",
         "//platforms",
         "//repositories",
+        "//versions",
     ],
 )
 

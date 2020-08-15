@@ -33,12 +33,11 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/bazelbuild/bazelisk/core"
 	"github.com/bazelbuild/bazelisk/httputil"
 	"github.com/bazelbuild/bazelisk/platforms"
-	version "github.com/hashicorp/go-version"
+	"github.com/bazelbuild/bazelisk/repositories"
 	homedir "github.com/mitchellh/go-homedir"
 )
 
@@ -181,41 +180,6 @@ func parseBazelForkAndVersion(bazelForkAndVersion string) (string, string, error
 	return bazelFork, bazelVersion, nil
 }
 
-type release struct {
-	TagName    string `json:"tag_name"`
-	Prerelease bool   `json:"prerelease"`
-}
-
-// maybeDownload will download a file from the given url and cache the result under bazeliskHome.
-// It skips the download if the file already exists and is not outdated.
-// description is used only to provide better error messages.
-func maybeDownload(bazeliskHome, url, filename, description string) ([]byte, error) {
-	cachePath := filepath.Join(bazeliskHome, filename)
-
-	if cacheStat, err := os.Stat(cachePath); err == nil {
-		if time.Since(cacheStat.ModTime()).Hours() < 1 {
-			res, err := ioutil.ReadFile(cachePath)
-			if err != nil {
-				return nil, fmt.Errorf("could not read %s: %v", cachePath, err)
-			}
-			return res, nil
-		}
-	}
-
-	// We could also use go-github here, but I can't get it to build with Bazel's rules_go and it pulls in a lot of dependencies.
-	body, err := httputil.ReadRemoteFile(url, getEnvOrConfig("BAZELISK_GITHUB_TOKEN"))
-	if err != nil {
-		return nil, fmt.Errorf("could not download %s: %v", description, err)
-	}
-
-	err = ioutil.WriteFile(cachePath, body, 0666)
-	if err != nil {
-		return nil, fmt.Errorf("could not create %s: %v", cachePath, err)
-	}
-
-	return body, nil
-}
-
 func resolveLatestVersion(bazeliskHome, bazelFork string, offset int) (string, error) {
 	versions, err := getVersionHistoryFromGitHub(bazeliskHome, bazelFork)
 	if err != nil {
@@ -235,87 +199,6 @@ func resolveLatestVersion(bazeliskHome, bazelFork string, offset int) (string, e
 	return versions[len(versions)-1-offset], nil
 }
 
-// TODO(fweikert): move into github.go
-func getVersionHistoryFromGitHub(bazeliskHome, bazelFork string) ([]string, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/bazel/releases", bazelFork)
-	releasesJSON, err := maybeDownload(bazeliskHome, url, bazelFork+"-releases.json", "list of Bazel releases from github.com/"+bazelFork)
-	if err != nil {
-		return []string{}, fmt.Errorf("could not get releases from github.com/%s/bazel: %v", bazelFork, err)
-	}
-
-	var releases []release
-	if err := json.Unmarshal(releasesJSON, &releases); err != nil {
-		return []string{}, fmt.Errorf("could not parse JSON into list of releases: %v", err)
-	}
-
-	var tags []string
-	for _, release := range releases {
-		if release.Prerelease {
-			continue
-		}
-		tags = append(tags, release.TagName)
-	}
-	return getVersionsInAscendingOrder(tags)
-}
-
-// TODO(fweikert): move into gcs.go
-func getVersionHistoryFromGCS(onlyFullReleases bool) ([]string, error) {
-	prefixes, _, err := listDirectoriesInReleaseBucket("")
-	if err != nil {
-		return []string{}, fmt.Errorf("could not list Bazel versions in GCS bucket: %v", err)
-	}
-
-	versions := getVersionsFromGCSPrefixes(prefixes)
-	sorted, err := getVersionsInAscendingOrder(versions)
-	if err != nil {
-		return []string{}, fmt.Errorf("invalid version label: %v", err)
-	}
-
-	if onlyFullReleases && len(sorted) > 0 {
-		latestVersion := sorted[len(sorted)-1]
-		_, isRelease, err := listDirectoriesInReleaseBucket(latestVersion + "/release/")
-		if err != nil {
-			return []string{}, fmt.Errorf("could not list release candidates for latest release: %v", err)
-		}
-		if !isRelease {
-			sorted = sorted[:len(sorted)-1]
-		}
-	}
-
-	return sorted, nil
-}
-
-func getVersionsFromGCSPrefixes(versions []string) []string {
-	result := make([]string, len(versions))
-	for i, v := range versions {
-		result[i] = strings.TrimSuffix(v, "/")
-	}
-	return result
-}
-
-func getVersionsInAscendingOrder(versions []string) ([]string, error) {
-	wrappers := make([]*version.Version, len(versions))
-	for i, v := range versions {
-		wrapper, err := version.NewVersion(v)
-		if err != nil {
-			log.Printf("WARN: Could not parse version: %s", v)
-		}
-		wrappers[i] = wrapper
-	}
-	sort.Sort(version.Collection(wrappers))
-
-	sorted := make([]string, len(versions))
-	for i, w := range wrappers {
-		sorted[i] = w.Original()
-	}
-	return sorted, nil
-}
-
-type gcsListResponse struct {
-	Prefixes []string      `json:"prefixes"`
-	Items    []interface{} `json:"items"`
-}
-
 func resolveLatestRcVersion() (string, error) {
 	versions, err := getVersionHistoryFromGCS(false)
 	if err != nil {
@@ -332,23 +215,6 @@ func resolveLatestRcVersion() (string, error) {
 		return "", fmt.Errorf("could not list release candidates for latest release: %v", err)
 	}
 	return getHighestRcVersion(rcVersions)
-}
-
-func listDirectoriesInReleaseBucket(prefix string) ([]string, bool, error) {
-	url := "https://www.googleapis.com/storage/v1/b/bazel/o?delimiter=/"
-	if prefix != "" {
-		url = fmt.Sprintf("%s&prefix=%s", url, prefix)
-	}
-	content, err := httputil.ReadRemoteFile(url, "")
-	if err != nil {
-		return nil, false, fmt.Errorf("could not list GCS objects at %s: %v", url, err)
-	}
-
-	var response gcsListResponse
-	if err := json.Unmarshal(content, &response); err != nil {
-		return nil, false, fmt.Errorf("could not parse GCS index JSON: %v", err)
-	}
-	return response.Prefixes, len(response.Items) > 0, nil
 }
 
 func getHighestRcVersion(versions []string) (string, error) {
@@ -381,7 +247,7 @@ func resolveVersionLabel(bazeliskHome, bazelFork, bazelVersion string, repos *co
 		// 2. Whether the first value refers to a commit,
 		// 3. An error.
 		if ok, downstreamGreen := isLastGreen(bazelVersion); ok {
-			commit, err := repos.LastGreen.GetLastGreenVersion(downstreamGreen)
+			commit, err := repos.LastGreen.GetLastGreenVersion(bazeliskHome, downstreamGreen)
 			if err != nil {
 				return "", false, fmt.Errorf("cannot resolve last green commit: %v", err)
 			}
@@ -416,8 +282,7 @@ func resolveVersionLabel(bazeliskHome, bazelFork, bazelVersion string, repos *co
 
 func isLastGreen(version string) (ok bool, includeDownstream bool) {
 	includeDownstream = version == "last_downstream_green"
-	ok = version == "last_green" || isDownstream
-	return
+	ok = version == "last_green" || includeDownstream
 }
 
 func determineURL(fork string, version string, isCommit bool, filename string) string {
@@ -618,7 +483,7 @@ func getIncompatibleFlags(bazeliskHome, resolvedBazelVersion string) (map[string
 		return nil, fmt.Errorf("invalid version %v", resolvedBazelVersion)
 	}
 	url := "https://api.github.com/search/issues?per_page=100&q=repo:bazelbuild/bazel+label:migration-" + version
-	issuesJSON, err := maybeDownload(bazeliskHome, url, "flags-"+version, "list of flags from GitHub")
+	issuesJSON, err := httputil.MaybeDownload(bazeliskHome, url, "flags-"+version, "list of flags from GitHub", getEnvOrConfig("BAZELISK_GITHUB_TOKEN"))
 	if err != nil {
 		return nil, fmt.Errorf("could not get issues from GitHub: %v", err)
 	}
@@ -803,7 +668,7 @@ func dirForURL(url string) string {
 	return regexp.MustCompile("[[:^alnum:]]").ReplaceAllString(url, "-")
 }
 
-func RunBazelisk(args []string) (int, error) {
+func RunBazelisk(args []string, repos *core.Repositories) (int, error) {
 	bazeliskHome := getEnvOrConfig("BAZELISK_HOME")
 	if len(bazeliskHome) == 0 {
 		userCacheDir, err := os.UserCacheDir()
@@ -920,7 +785,9 @@ func RunBazelisk(args []string) (int, error) {
 }
 
 func main() {
-	repositories := core.CreateRepositories()
+	gcs := &repositories.GCSRepo{}
+	gitHub := repositories.CreateGitHubRepo(getEnvOrConfig("BAZELISK_GITHUB_TOKEN")
+	repositories := core.CreateRepositories(gcs, gcs, gitHub, gcs)
 
 	exitCode, err := RunBazelisk(os.Args[1:], repositories)
 	if err != nil {
