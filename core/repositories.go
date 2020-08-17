@@ -3,9 +3,14 @@ package core
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/bazelbuild/bazelisk/httputil"
 	"github.com/bazelbuild/bazelisk/platforms"
+)
+
+const (
+	BASE_URL_ENV = "BAZELISK_BASE_URL"
 )
 
 type ReleaseRepo interface {
@@ -36,11 +41,24 @@ type Repositories struct {
 	supportsBaseURL bool
 }
 
+func (r *Repositories) DownloadFromRepo(fork, version string, isCommit bool, destDir, destFile string) (string, error) {
+	switch {
+	case fork != "":
+		return r.Fork.DownloadVersion(fork, version, destDir, destFile)
+	case isCommit:
+		return r.LastGreen.DownloadLastGreen(version, destDir, destFile)
+	case strings.Contains(version, "rc"):
+		return r.Candidates.DownloadCandidate(version, destDir, destFile)
+	default:
+		return r.Releases.DownloadRelease(version, destDir, destFile)
+	}
+}
+
 func (r *Repositories) DownloadFromBaseURL(baseURL, version, destDir, destFile string) (string, error) {
 	if !r.supportsBaseURL {
-		return "", fmt.Errorf("downloads from BAZELISK_BASE_URL are forbidden")
+		return "", fmt.Errorf("downloads from %s are forbidden", BASE_URL_ENV)
 	} else if baseURL == "" {
-		return "", errors.New("BAZELISK_BASE_URL is not set")
+		return "", fmt.Errorf("%s is not set", BASE_URL_ENV)
 	}
 	url := fmt.Sprintf("%s/%s/%s", baseURL, platforms.GetPlatform(), version)
 	return httputil.DownloadBinary(url, destDir, destFile)

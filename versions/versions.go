@@ -7,7 +7,7 @@ import (
 	"github.com/hashicorp/go-version"
 )
 
-func GetInAscendingOrder(versions []string) ([]string, error) {
+func GetInAscendingOrder(versions []string) []string {
 	wrappers := make([]*version.Version, len(versions))
 	for i, v := range versions {
 		wrapper, err := version.NewVersion(v)
@@ -22,5 +22,5 @@ func GetInAscendingOrder(versions []string) ([]string, error) {
 	for i, w := range wrappers {
 		sorted[i] = w.Original()
 	}
-	return sorted, nil
+	return sorted
 }

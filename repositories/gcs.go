@@ -39,10 +39,7 @@ func getVersionHistoryFromGCS(onlyFullReleases bool) ([]string, error) {
 	}
 
 	available := getVersionsFromGCSPrefixes(prefixes)
-	sorted, err := versions.GetInAscendingOrder(available)
-	if err != nil {
-		return []string{}, fmt.Errorf("invalid version label: %v", err)
-	}
+	sorted := versions.GetInAscendingOrder(available)
 
 	if onlyFullReleases && len(sorted) > 0 {
 		latestVersion := sorted[len(sorted)-1]
