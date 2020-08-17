@@ -46,7 +46,6 @@ const (
 	bazelReal      = "BAZEL_REAL"
 	skipWrapperEnv = "BAZELISK_SKIP_WRAPPER"
 	wrapperPath    = "./tools/bazel"
-	bazelUpstream  = "bazelbuild"
 )
 
 var (
@@ -171,7 +170,7 @@ func parseBazelForkAndVersion(bazelForkAndVersion string) (string, string, error
 	versionInfo := strings.Split(bazelForkAndVersion, "/")
 
 	if len(versionInfo) == 1 {
-		bazelFork, bazelVersion = bazelUpstream, versionInfo[0]
+		bazelFork, bazelVersion = core.BazelUpstream, versionInfo[0]
 	} else if len(versionInfo) == 2 {
 		bazelFork, bazelVersion = versionInfo[0], versionInfo[1]
 	} else {
@@ -239,7 +238,7 @@ func getHighestRcVersion(availableVersions []string) (string, error) {
 }
 
 func resolveVersionLabel(bazeliskHome, bazelFork, bazelVersion string, repos *core.Repositories) (string, bool, error) {
-	if bazelFork == bazelUpstream {
+	if !core.IsFork(bazelFork) {
 		// Returns three values:
 		// 1. The label of a Blaze release (if the label resolves to a release) or a commit (for unreleased binaries),
 		// 2. Whether the first value refers to a commit,
@@ -287,6 +286,7 @@ func isLastGreen(version string) (ok bool, includeDownstream bool) {
 func determineURL(fork string, version string, isCommit bool, filename string) string {
 	baseURL := getEnvOrConfig("BAZELISK_BASE_URL")
 
+	// Technically this function should only be called when BAZELISK_BASE_URL is set.
 	if isCommit {
 		if len(baseURL) == 0 {
 			baseURL = "https://storage.googleapis.com/bazel-builds/artifacts"
@@ -308,7 +308,7 @@ func determineURL(fork string, version string, isCommit bool, filename string) s
 		return fmt.Sprintf("%s/%s/%s", baseURL, version, filename)
 	}
 
-	if fork == bazelUpstream {
+	if !core.IsFork(fork) {
 		return fmt.Sprintf("https://releases.bazel.build/%s/%s/%s", version, kind, filename)
 	}
 

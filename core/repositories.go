@@ -10,7 +10,8 @@ import (
 )
 
 const (
-	BASE_URL_ENV = "BAZELISK_BASE_URL"
+	BASE_URL_ENV  = "BAZELISK_BASE_URL"
+	BazelUpstream = "bazelbuild"
 )
 
 type ReleaseRepo interface {
@@ -41,9 +42,13 @@ type Repositories struct {
 	supportsBaseURL bool
 }
 
+func IsFork(value string) bool {
+	return value != "" && value != BazelUpstream
+}
+
 func (r *Repositories) DownloadFromRepo(fork, version string, isCommit bool, destDir, destFile string) (string, error) {
 	switch {
-	case fork != "":
+	case IsFork(fork):
 		return r.Fork.DownloadVersion(fork, version, destDir, destFile)
 	case isCommit:
 		return r.LastGreen.DownloadLastGreen(version, destDir, destFile)
