@@ -25,7 +25,7 @@ func (gh *GitHubRepo) GetVersions(bazeliskHome, bazelFork string) ([]string, err
 	url := fmt.Sprintf("https://api.github.com/repos/%s/bazel/releases", bazelFork)
 	releasesJSON, err := httputil.MaybeDownload(bazeliskHome, url, bazelFork+"-releases.json", "list of Bazel releases from github.com/"+bazelFork, gh.token)
 	if err != nil {
-		return []string{}, fmt.Errorf("could not get releases from github.com/%s/bazel: %v", bazelFork, err)
+		return []string{}, fmt.Errorf("unable to dermine '%s' releases: %v", bazelFork, err)
 	}
 
 	var releases []gitHubRelease

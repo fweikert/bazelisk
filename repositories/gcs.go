@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -65,7 +66,7 @@ func listDirectoriesInReleaseBucket(prefix string) ([]string, bool, error) {
 		return nil, false, fmt.Errorf("could not list GCS objects at %s: %v", url, err)
 	}
 
-	var response gcsListResponse
+	var response GcsListResponse
 	if err := json.Unmarshal(content, &response); err != nil {
 		return nil, false, fmt.Errorf("could not parse GCS index JSON: %v", err)
 	}
@@ -75,12 +76,13 @@ func listDirectoriesInReleaseBucket(prefix string) ([]string, bool, error) {
 func getVersionsFromGCSPrefixes(versions []string) []string {
 	result := make([]string, len(versions))
 	for i, v := range versions {
-		result[i] = strings.TrimSuffix(v, "/")
+		result[i] = strings.ReplaceAll(v, "/", "")
 	}
 	return result
 }
 
-type gcsListResponse struct {
+// Public for testing
+type GcsListResponse struct {
 	Prefixes []string      `json:"prefixes"`
 	Items    []interface{} `json:"items"`
 }
@@ -92,7 +94,25 @@ func (gcs *GCSRepo) DownloadRelease(version, destDir, destFile string) (string, 
 
 // CandidateRepo
 func (gcs *GCSRepo) GetCandidateVersions(bazeliskHome string) ([]string, error) {
-	return getVersionHistoryFromGCS(false)
+	available, err := getVersionHistoryFromGCS(false)
+	if err != nil {
+		return []string{}, err
+	}
+
+	if len(available) == 0 {
+		return []string{}, errors.New("could not find any Bazel versions")
+	}
+
+	sorted := versions.GetInAscendingOrder(available)
+	latestVersion := sorted[len(sorted)-1]
+
+	// Append slash to match directories
+	rcPrefixes, _, err := listDirectoriesInReleaseBucket(latestVersion + "/")
+	if err != nil {
+		return []string{}, fmt.Errorf("could not list release candidates for latest release: %v", err)
+	}
+
+	return getVersionsFromGCSPrefixes(rcPrefixes), nil
 }
 
 func (gcs *GCSRepo) DownloadCandidate(version, destDir, destFile string) (string, error) {

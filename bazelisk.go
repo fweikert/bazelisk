@@ -214,27 +214,16 @@ func resolveLatestRcVersion(bazeliskHome string, repo core.CandidateRepo) (strin
 
 func getHighestRcVersion(availableVersions []string) (string, error) {
 	sorted := versions.GetInAscendingOrder(availableVersions)
+	latest := sorted[len(sorted)-1]
 
-	var version string
-	var lastRc int
-	re := regexp.MustCompile(`(\d+.\d+.\d+)/rc(\d+)/`)
-	for _, v := range sorted {
-		// Fallback: use latest release if there is no active RC.
-		if strings.Index(v, "release") > -1 {
-			return strings.Split(v, "/")[0], nil
-		}
-
-		m := re.FindStringSubmatch(v)
-		version = m[1]
-		rc, err := strconv.Atoi(m[2])
-		if err != nil {
-			return "", fmt.Errorf("Invalid version number %s: %v", strings.TrimSuffix(v, "/"), err)
-		}
-		if rc > lastRc {
-			lastRc = rc
-		}
+	re := regexp.MustCompile(`(\d+.\d+.\d+)rc(\d+)$`)
+	m := re.FindStringSubmatch(latest)
+	_, err := strconv.Atoi(m[2])
+	if err != nil {
+		return "", fmt.Errorf("Invalid version number %s: %v", latest, err)
 	}
-	return fmt.Sprintf("%src%d", version, lastRc), nil
+
+	return latest, nil
 }
 
 func resolveVersionLabel(bazeliskHome, bazelFork, bazelVersion string, repos *core.Repositories) (string, bool, error) {
