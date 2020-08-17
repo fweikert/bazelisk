@@ -182,10 +182,10 @@ func parseBazelForkAndVersion(bazelForkAndVersion string) (string, string, error
 
 func resolveLatestVersion(bazeliskHome, bazelFork string, offset int, repos *core.Repositories) (string, error) {
 	available, err := func() ([]string, error) {
-		if bazelFork == "" {
-			return repos.Releases.GetReleaseVersions(bazeliskHome)
+		if core.IsFork(bazelFork) {
+			return repos.Fork.GetVersions(bazeliskHome, bazelFork)
 		}
-		return repos.Fork.GetVersions(bazeliskHome, bazelFork)
+		return repos.Releases.GetReleaseVersions(bazeliskHome)
 	}()
 
 	if err != nil {

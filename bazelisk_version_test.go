@@ -71,7 +71,7 @@ func TestResolveLatestVersion_GCSIsDown(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected resolveLatestVersion() to fail.")
 	}
-	expectedPrefix := "could not list Bazel versions in GCS bucket"
+	expectedPrefix := "unable to determine latest version: could not list Bazel versions in GCS bucket"
 	if !strings.HasPrefix(err.Error(), expectedPrefix) {
 		t.Fatalf("Expected error message that starts with '%s', but got '%v'", expectedPrefix, err)
 	}
