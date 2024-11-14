@@ -22,40 +22,48 @@ const (
 // DownloadFunc downloads a specific Bazel binary to the given location and returns the absolute path.
 type DownloadFunc func(destDir, destFile string) (string, error)
 
-// ReleaseFilter filters Bazel versions based on specific criteria.
-type ReleaseFilter func(matchesSoFar int, currentVersion string) bool
+// VersionFilter filters Bazel versions based on specific criteria.
+type VersionFilter func(string) bool
 
-func lastNReleases(max int) ReleaseFilter {
-	return func(matchesSoFar int, currentVersion string) bool {
-		return max < 1 || matchesSoFar < max
-	}
+var IsRelease = func(version string) bool {
+	return !strings.Contains(version, "pre") && !strings.Contains(version, "rc")
 }
 
-// filterReleasesByTrack only works reliably if iterating on Bazel versions in descending order.
-func filterReleasesByTrack(track int) ReleaseFilter {
+var IsCandidate = func(version string) bool {
+	return !strings.Contains(version, "pre") && strings.Contains(version, "rc")
+}
+
+var IsLTS = func(version string) bool {
+	return !strings.Contains(version, "pre")
+}
+
+func TrackFilter(track int) ReleaseFilter {
 	prefix := fmt.Sprintf("%d.", track)
-	return func(matchesSoFar int, currentVersion string) bool {
-		return matchesSoFar == 0 && strings.HasPrefix(currentVersion, prefix)
+	return func(version string) bool {
+		return strings.HasPrefix(version, prefix)
 	}
 }
 
-// ReleaseRepo represents a repository that stores LTS Bazel releases.
-type ReleaseRepo interface {
-	// GetReleaseVersions returns a list of all available release versions that match the given filter function.
-	// Warning: the filter only works reliably if the versions are processed in descending order!
-	GetReleaseVersions(bazeliskHome string, filter ReleaseFilter) ([]string, error)
-
-	// DownloadRelease downloads the given Bazel version into the specified location and returns the absolute path.
-	DownloadRelease(version, destDir, destFile string, config config.Config) (string, error)
+type FilterOpts struct {
+	MaxResults int
+	Filters []VersionFilter
 }
 
-// CandidateRepo represents a repository that stores Bazel release candidates.
-type CandidateRepo interface {
-	// GetCandidateVersions returns the versions of all available release candidates.
-	GetCandidateVersions(bazeliskHome string) ([]string, error)
+func NewFilterOpts(maxResults int, filters VersionFilter...) *FilterOpts {
+	return &FilterOpts{
+		MaxResults: maxResults,
+		Filters: filters,
+	}
+}
 
-	// DownloadCandidate downloads the given Bazel release candidate into the specified location and returns the absolute path.
-	DownloadCandidate(version, destDir, destFile string, config config.Config) (string, error)
+// LTSRepo represents a repository that stores LTS Bazel releases and their candidates.
+type LTSRepo interface {
+	// GetVersions returns a list of all available LTS release (candidates) that match the given filter options.
+	// Warning: Filters only work reliably if the versions are processed in descending order!
+	GetVersions(bazeliskHome string, opts *FilterOpts) ([]string, error)
+
+	// Download downloads the given Bazel version into the specified location and returns the absolute path.
+	Download(version, destDir, destFile string, config config.Config) (string, error)
 }
 
 // ForkRepo represents a repository that stores a fork of Bazel (releases).
@@ -90,8 +98,7 @@ type RollingRepo interface {
 
 // Repositories offers access to different types of Bazel repositories, mainly for finding and downloading the correct version of Bazel.
 type Repositories struct {
-	Releases        ReleaseRepo
-	Candidates      CandidateRepo
+	LTS        LTSRepo
 	Fork            ForkRepo
 	Commits         CommitRepo
 	Rolling         RollingRepo
