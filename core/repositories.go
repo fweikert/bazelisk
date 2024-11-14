@@ -114,10 +114,8 @@ func (r *Repositories) ResolveVersion(bazeliskHome, fork, version string, config
 
 	if vi.IsFork {
 		return r.resolveFork(bazeliskHome, vi, config)
-	} else if vi.IsRelease {
-		return r.resolveRelease(bazeliskHome, vi, config)
-	} else if vi.IsCandidate {
-		return r.resolveCandidate(bazeliskHome, vi, config)
+	} else if vi.IsLTS {
+		return r.resolveLTS(bazeliskHome, vi, config)
 	} else if vi.IsCommit {
 		return r.resolveCommit(bazeliskHome, vi, config)
 	} else if vi.IsRolling {
@@ -144,7 +142,9 @@ func (r *Repositories) resolveFork(bazeliskHome string, vi *versions.Info, confi
 	return version, downloader, nil
 }
 
-func (r *Repositories) resolveRelease(bazeliskHome string, vi *versions.Info, config config.Config) (string, DownloadFunc, error) {
+/* TODO START */
+
+func (r *Repositories) resolveLTS(bazeliskHome string, vi *versions.Info, config config.Config) (string, DownloadFunc, error) {
 	lister := func(bazeliskHome string) ([]string, error) {
 		var filter ReleaseFilter
 		if vi.TrackRestriction > 0 {
@@ -176,6 +176,8 @@ func (r *Repositories) resolveCandidate(bazeliskHome string, vi *versions.Info, 
 	}
 	return version, downloader, nil
 }
+
+/* TODO END */
 
 func (r *Repositories) resolveCommit(bazeliskHome string, vi *versions.Info, config config.Config) (string, DownloadFunc, error) {
 	version := vi.Value
