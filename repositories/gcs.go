@@ -31,7 +31,7 @@ type GCSRepo struct{}
 // ReleaseRepo
 
 // GetReleaseVersions returns the versions of all available Bazel releases in this repository that match the given filter.
-func (gcs *GCSRepo) GetReleaseVersions(bazeliskHome string, filter core.ReleaseFilter) ([]string, error) {
+func (gcs *GCSRepo) GetReleaseVersions(bazeliskHome string, filter core.ReleaseFilter, includeCandidates bool) ([]string, error) {
 	history, err := getVersionHistoryFromGCS()
 	if err != nil {
 		return []string{}, err

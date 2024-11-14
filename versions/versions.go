@@ -17,7 +17,7 @@ const (
 )
 
 var (
-	releasePattern       = regexp.MustCompile(`^(\d+)\.(x|\d+\.\d+)$`)
+	releasePattern       = regexp.MustCompile(`^(\d+)\.(x|\*|\d+\.\d+)$`)
 	patchPattern         = regexp.MustCompile(`^(\d+\.\d+\.\d+)-([\w\d]+)$`)
 	candidatePattern     = regexp.MustCompile(`^(\d+\.\d+\.\d+)rc(\d+)$`)
 	rollingPattern       = regexp.MustCompile(`^\d+\.0\.0-pre\.\d{8}(\.\d+){1,2}$`)
@@ -27,7 +27,7 @@ var (
 
 // Info represents a structured Bazel version identifier.
 type Info struct {
-	IsRelease, IsCandidate, IsCommit, IsFork, IsRolling, IsRelative bool
+	IsRelease, IsCandidate, IsCommit, IsFork, IsRolling, IsRelative, CanBeCandidate bool
 	Fork, Value                                                                   string
 	LatestOffset, TrackRestriction                                                int
 }
@@ -38,13 +38,14 @@ func Parse(fork, version string) (*Info, error) {
 
 	if m := releasePattern.FindStringSubmatch(version); m != nil {
 		vi.IsRelease = true
-		if m[2] == "x" {
+		if m[2] == "x" || m[2] == "*" {
 			track, err := strconv.Atoi(m[1])
 			if err != nil {
-				return nil, fmt.Errorf("invalid version %q, expected something like '5.2.1' or '5.x'", version)
+				return nil, fmt.Errorf("invalid version %q, expected something like '5.2.1', '5.x' or '5.*'", version)
 			}
 			vi.IsRelative = true
 			vi.TrackRestriction = track
+			vi.CanBeCandidate = m[2] == "*"
 		}
 	} else if patchPattern.MatchString(version) {
 		vi.IsRelease = true
