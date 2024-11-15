@@ -27,9 +27,9 @@ type LTSFilter func(string) bool
 
 // FilterOpts represents a collection of version filters.
 type FilterOpts struct {
-	MaxResults       int
-	TrackRestriction int
-	Filters          []LTSFilter
+	MaxResults int
+	Track      int
+	Filters    []LTSFilter
 }
 
 func (o *FilterOpts) ApplyFilters(version string) bool {
@@ -135,17 +135,11 @@ var IsCandidate = func(version string) bool {
 	return strings.Contains(version, "rc")
 }
 
-func trackFilter(track int) LTSFilter {
-	prefix := fmt.Sprintf("%d.", track)
-	return func(version string) bool {
-		return strings.HasPrefix(version, prefix)
-	}
-}
-
 func (r *Repositories) resolveLTS(bazeliskHome string, vi *versions.Info, config config.Config) (string, DownloadFunc, error) {
 	opts := &FilterOpts{
 		// Optimization: only fetch last (x+1) releases if the version is "latest-x".
 		MaxResults: vi.LatestOffset + 1,
+		Track:      vi.TrackRestriction,
 		Filters:    []LTSFilter{},
 	}
 
@@ -153,11 +147,6 @@ func (r *Repositories) resolveLTS(bazeliskHome string, vi *versions.Info, config
 		opts.Filters = append(opts.Filters, IsRelease)
 	} else {
 		opts.Filters = append(opts.Filters, IsCandidate)
-	}
-
-	if vi.TrackRestriction > 0 {
-		// Optimization: only fetch matching releases if an LTS track is specified.
-		opts.Filters = append(opts.Filters, trackFilter(vi.TrackRestriction))
 	}
 
 	lister := func(bazeliskHome string) ([]string, error) {

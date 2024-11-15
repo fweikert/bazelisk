@@ -138,17 +138,18 @@ func getVersionsFromGCSPrefixes(versions []string) []string {
 
 func (gcs *GCSRepo) matchingVersions(history []string, opts *core.FilterOpts) ([]string, error) {
 	descendingMatches := make([]string, 0)
+	// history is a list of base versions in ascending order (i.e. X.Y.Z, no rolling releases or candidates).
 	for hpos := len(history) - 1; hpos >= 0; hpos-- {
 		baseVersion := history[hpos]
 
-		if opts.TrackRestriction > 0 {
+		if opts.Track > 0 {
 			track, err := getTrack(baseVersion)
 			if err != nil {
-				continue // Ignore errors for now
+				continue // Ignore invalid GCS entries for now
 			}
-			if track > opts.TrackRestriction {
+			if track > opts.Track {
 				continue
-			} else if track < opts.TrackRestriction {
+			} else if track < opts.Track {
 				break
 			}
 		}
