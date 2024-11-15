@@ -45,7 +45,7 @@ func Parse(fork, version string) (*Info, error) {
 	} else if m := trackPattern.FindStringSubmatch(version); m != nil {
 		track, err := strconv.Atoi(m[1])
 		if err != nil {
-			return nil, fmt.Errorf("invalid version %q, expected something like '5.2.1' or '5.x'", version)
+			return nil, fmt.Errorf("invalid version %q, expected something like '5.x'", version)
 		}
 		vi.IsLTS = true
 		vi.IsRelease = true

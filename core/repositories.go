@@ -29,16 +29,7 @@ type LTSFilter func(string) bool
 type FilterOpts struct {
 	MaxResults int
 	Track      int
-	Filters    []LTSFilter
-}
-
-func (o *FilterOpts) ApplyFilters(version string) bool {
-	for _, f := range o.Filters {
-		if f(version) {
-			return true
-		}
-	}
-	return false
+	Filter     LTSFilter
 }
 
 // LTSRepo represents a repository that stores LTS Bazel releases and their candidates.
@@ -140,13 +131,12 @@ func (r *Repositories) resolveLTS(bazeliskHome string, vi *versions.Info, config
 		// Optimization: only fetch last (x+1) releases if the version is "latest-x".
 		MaxResults: vi.LatestOffset + 1,
 		Track:      vi.TrackRestriction,
-		Filters:    []LTSFilter{},
 	}
 
 	if vi.IsRelease {
-		opts.Filters = append(opts.Filters, IsRelease)
+		opts.Filter = IsRelease
 	} else {
-		opts.Filters = append(opts.Filters, IsCandidate)
+		opts.Filter = IsCandidate
 	}
 
 	lister := func(bazeliskHome string) ([]string, error) {
