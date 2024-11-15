@@ -22,48 +22,33 @@ const (
 // DownloadFunc downloads a specific Bazel binary to the given location and returns the absolute path.
 type DownloadFunc func(destDir, destFile string) (string, error)
 
-// VersionFilter filters Bazel versions based on specific criteria.
-type VersionFilter func(string) bool
+// LTSFilter filters Bazel versions based on specific criteria.
+type LTSFilter func(string) bool
 
-var IsRelease = func(version string) bool {
-	return !strings.Contains(version, "pre") && !strings.Contains(version, "rc")
-}
-
-var IsCandidate = func(version string) bool {
-	return !strings.Contains(version, "pre") && strings.Contains(version, "rc")
-}
-
-var IsLTS = func(version string) bool {
-	return !strings.Contains(version, "pre")
-}
-
-func TrackFilter(track int) ReleaseFilter {
-	prefix := fmt.Sprintf("%d.", track)
-	return func(version string) bool {
-		return strings.HasPrefix(version, prefix)
-	}
-}
-
+// FilterOpts represents a collection of version filters.
 type FilterOpts struct {
-	MaxResults int
-	Filters []VersionFilter
+	MaxResults       int
+	TrackRestriction int
+	Filters          []LTSFilter
 }
 
-func NewFilterOpts(maxResults int, filters VersionFilter...) *FilterOpts {
-	return &FilterOpts{
-		MaxResults: maxResults,
-		Filters: filters,
+func (o *FilterOpts) ApplyFilters(version string) bool {
+	for _, f := range o.Filters {
+		if f(version) {
+			return true
+		}
 	}
+	return false
 }
 
 // LTSRepo represents a repository that stores LTS Bazel releases and their candidates.
 type LTSRepo interface {
-	// GetVersions returns a list of all available LTS release (candidates) that match the given filter options.
+	// GetLTSVersions returns a list of all available LTS release (candidates) that match the given filter options.
 	// Warning: Filters only work reliably if the versions are processed in descending order!
-	GetVersions(bazeliskHome string, opts *FilterOpts) ([]string, error)
+	GetLTSVersions(bazeliskHome string, opts *FilterOpts) ([]string, error)
 
-	// Download downloads the given Bazel version into the specified location and returns the absolute path.
-	Download(version, destDir, destFile string, config config.Config) (string, error)
+	// DownloadLTS downloads the given Bazel version into the specified location and returns the absolute path.
+	DownloadLTS(version, destDir, destFile string, config config.Config) (string, error)
 }
 
 // ForkRepo represents a repository that stores a fork of Bazel (releases).
@@ -98,7 +83,7 @@ type RollingRepo interface {
 
 // Repositories offers access to different types of Bazel repositories, mainly for finding and downloading the correct version of Bazel.
 type Repositories struct {
-	LTS        LTSRepo
+	LTS             LTSRepo
 	Fork            ForkRepo
 	Commits         CommitRepo
 	Rolling         RollingRepo
@@ -122,7 +107,7 @@ func (r *Repositories) ResolveVersion(bazeliskHome, fork, version string, config
 		return r.resolveRolling(bazeliskHome, vi, config)
 	}
 
-	return "", nil, fmt.Errorf("Unsupported version identifier '%s'", version)
+	return "", nil, fmt.Errorf("unsupported version identifier '%s'", version)
 }
 
 func (r *Repositories) resolveFork(bazeliskHome string, vi *versions.Info, config config.Config) (string, DownloadFunc, error) {
@@ -142,42 +127,51 @@ func (r *Repositories) resolveFork(bazeliskHome string, vi *versions.Info, confi
 	return version, downloader, nil
 }
 
-/* TODO START */
+var IsRelease = func(version string) bool {
+	return !strings.Contains(version, "rc")
+}
+
+var IsCandidate = func(version string) bool {
+	return strings.Contains(version, "rc")
+}
+
+func trackFilter(track int) LTSFilter {
+	prefix := fmt.Sprintf("%d.", track)
+	return func(version string) bool {
+		return strings.HasPrefix(version, prefix)
+	}
+}
 
 func (r *Repositories) resolveLTS(bazeliskHome string, vi *versions.Info, config config.Config) (string, DownloadFunc, error) {
+	opts := &FilterOpts{
+		// Optimization: only fetch last (x+1) releases if the version is "latest-x".
+		MaxResults: vi.LatestOffset + 1,
+		Filters:    []LTSFilter{},
+	}
+
+	if vi.IsRelease {
+		opts.Filters = append(opts.Filters, IsRelease)
+	} else {
+		opts.Filters = append(opts.Filters, IsCandidate)
+	}
+
+	if vi.TrackRestriction > 0 {
+		// Optimization: only fetch matching releases if an LTS track is specified.
+		opts.Filters = append(opts.Filters, trackFilter(vi.TrackRestriction))
+	}
+
 	lister := func(bazeliskHome string) ([]string, error) {
-		var filter ReleaseFilter
-		if vi.TrackRestriction > 0 {
-			// Optimization: only fetch matching releases if an LTS track is specified.
-			filter = filterReleasesByTrack(vi.TrackRestriction)
-		} else {
-			// Optimization: only fetch last (x+1) releases if the version is "latest-x".
-			filter = lastNReleases(vi.LatestOffset + 1)
-		}
-		return r.Releases.GetReleaseVersions(bazeliskHome, filter)
+		return r.LTS.GetLTSVersions(bazeliskHome, opts)
 	}
 	version, err := resolvePotentiallyRelativeVersion(bazeliskHome, lister, vi)
 	if err != nil {
 		return "", nil, err
 	}
 	downloader := func(destDir, destFile string) (string, error) {
-		return r.Releases.DownloadRelease(version, destDir, destFile, config)
+		return r.LTS.DownloadLTS(version, destDir, destFile, config)
 	}
 	return version, downloader, nil
 }
-
-func (r *Repositories) resolveCandidate(bazeliskHome string, vi *versions.Info, config config.Config) (string, DownloadFunc, error) {
-	version, err := resolvePotentiallyRelativeVersion(bazeliskHome, r.Candidates.GetCandidateVersions, vi)
-	if err != nil {
-		return "", nil, err
-	}
-	downloader := func(destDir, destFile string) (string, error) {
-		return r.Candidates.DownloadCandidate(version, destDir, destFile, config)
-	}
-	return version, downloader, nil
-}
-
-/* TODO END */
 
 func (r *Repositories) resolveCommit(bazeliskHome string, vi *versions.Info, config config.Config) (string, DownloadFunc, error) {
 	version := vi.Value
@@ -306,19 +300,13 @@ func (r *Repositories) DownloadFromFormatURL(config config.Config, formatURL, ve
 }
 
 // CreateRepositories creates a new Repositories instance with the given repositories. Any nil repository will be replaced by a dummy repository that raises an error whenever a download is attempted.
-func CreateRepositories(releases ReleaseRepo, candidates CandidateRepo, fork ForkRepo, commits CommitRepo, rolling RollingRepo, supportsBaseURL bool) *Repositories {
+func CreateRepositories(lts LTSRepo, fork ForkRepo, commits CommitRepo, rolling RollingRepo, supportsBaseURL bool) *Repositories {
 	repos := &Repositories{supportsBaseURL: supportsBaseURL}
 
-	if releases == nil {
-		repos.Releases = &noReleaseRepo{err: errors.New("Bazel LTS releases are not supported")}
+	if lts == nil {
+		repos.LTS = &noLTSRepo{err: errors.New("Bazel LTS releases & candidates are not supported")}
 	} else {
-		repos.Releases = releases
-	}
-
-	if candidates == nil {
-		repos.Candidates = &noCandidateRepo{err: errors.New("Bazel release candidates are not supported")}
-	} else {
-		repos.Candidates = candidates
+		repos.LTS = lts
 	}
 
 	if fork == nil {
@@ -342,31 +330,19 @@ func CreateRepositories(releases ReleaseRepo, candidates CandidateRepo, fork For
 	return repos
 }
 
-// The whole point of the structs below this line is that users can simply call repos.Releases.GetReleaseVersions()
-// (etc) without having to worry whether `Releases` points at an actual repo.
+// The whole point of the structs below this line is that users can simply call repos.LTS.GetLTSVersions()
+// (etc) without having to worry whether `LTS` points at an actual repo.
 
-type noReleaseRepo struct {
+type noLTSRepo struct {
 	err error
 }
 
-func (nrr *noReleaseRepo) GetReleaseVersions(bazeliskHome string, filter ReleaseFilter) ([]string, error) {
-	return nil, nrr.err
+func (nolts *noLTSRepo) GetLTSVersions(bazeliskHome string, opts *FilterOpts) ([]string, error) {
+	return nil, nolts.err
 }
 
-func (nrr *noReleaseRepo) DownloadRelease(version, destDir, destFile string, config config.Config) (string, error) {
-	return "", nrr.err
-}
-
-type noCandidateRepo struct {
-	err error
-}
-
-func (ncc *noCandidateRepo) GetCandidateVersions(bazeliskHome string) ([]string, error) {
-	return nil, ncc.err
-}
-
-func (ncc *noCandidateRepo) DownloadCandidate(version, destDir, destFile string, config config.Config) (string, error) {
-	return "", ncc.err
+func (nolts *noLTSRepo) DownloadLTS(version, destDir, destFile string, config config.Config) (string, error) {
+	return "", nolts.err
 }
 
 type noForkRepo struct {
