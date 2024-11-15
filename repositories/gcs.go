@@ -161,7 +161,7 @@ func (gcs *GCSRepo) matchingVersions(history []string, opts *core.FilterOpts) ([
 			return []string{}, fmt.Errorf("could not list LTS releases/candidates: %v", err)
 		}
 
-		// Ascending list of rc versions, followed by the release version (if it exists).
+		// Ascending list of rc versions, followed by the release version (if it exists) and a rolling identifier (if there are rolling releases).
 		versions := getVersionsFromGCSPrefixes(prefixes)
 		for vpos := len(versions) - 1; vpos >= 0 && len(descendingMatches) < opts.MaxResults; vpos-- {
 			curr := versions[vpos]

@@ -25,8 +25,8 @@ var (
 )
 
 func TestGetInAscendingOrder(t *testing.T) {
-	input := []string{"7.0.1rc2", "10.11.12", "6.0.0", "7.0.1", "6.0.0rc2", "7.0.1rc1", "10.11.12rc1", "6.0.0rc1"}
-	want := []string{"6.0.0rc1", "6.0.0rc2", "6.0.0", "7.0.0rc1", "7.0.0rc2", "7.0.0", "10.11.12rc1", "10.11.12"}
+	input := []string{"7.0.1rc2", "6.1.0", "6.0.1", "10.11.12", "6.0.0", "7.0.1", "6.0.0rc2", "7.0.1rc1", "10.11.12rc1", "6.0.0rc1"}
+	want := []string{"6.0.0rc1", "6.0.0rc2", "6.0.0", "6.0.1", "6.1.0", "7.0.1rc1", "7.0.1rc2", "7.0.1", "10.11.12rc1", "10.11.12"}
 
 	got := versions.GetInAscendingOrder(input)
 	if !slices.Equal(got, want) {
